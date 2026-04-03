@@ -233,7 +233,7 @@ def chat_gemini(message: str, files: list[str], history: list, model: str, api_k
 # ---------------------------------------------------------------------------
 
 PROVIDER_MODELS = {
-    "OpenAI": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"],
+    "OpenAI": ["gpt-5.3", "gpt-5.3-codex", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"],
     "Claude": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"],
     "Gemini": ["gemini-2.0-flash", "gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-04-17"],
 }
