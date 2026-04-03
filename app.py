@@ -229,6 +229,32 @@ def chat_gemini(message: str, files: list[str], history: list, model: str, api_k
 
 
 # ---------------------------------------------------------------------------
+# Provider: xAI Grok (OpenAI-compatible API)
+# ---------------------------------------------------------------------------
+
+def chat_grok(message: str, files: list[str], history: list, model: str, api_key: str, system_prompt: str):
+    client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+    messages = [{"role": "system", "content": system_prompt}]
+
+    for msg in history:
+        messages.append(msg)
+
+    content_parts = [{"type": "text", "text": message}] if message else []
+    for fp in files:
+        content_parts.extend(_build_openai_file_content(fp))
+
+    messages.append({"role": "user", "content": content_parts if len(content_parts) > 1 else message or "Please analyze the uploaded files."})
+
+    response = client.chat.completions.create(model=model, messages=messages, stream=True)
+    partial = ""
+    for chunk in response:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            partial += delta
+            yield partial
+
+
+# ---------------------------------------------------------------------------
 # Available models per provider
 # ---------------------------------------------------------------------------
 
@@ -236,12 +262,14 @@ PROVIDER_MODELS = {
     "OpenAI": ["gpt-5.3", "gpt-5.3-codex", "gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3-mini"],
     "Claude": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"],
     "Gemini": ["gemini-3.1-pro", "gemini-3.1-flash", "gemini-3.1-flash-lite", "gemini-3-pro", "gemini-3-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "Grok": ["grok-4.1-fast", "grok-4.20", "grok-code-fast-1", "grok-beta"],
 }
 
 PROVIDER_FN = {
     "OpenAI": chat_openai,
     "Claude": chat_claude,
     "Gemini": chat_gemini,
+    "Grok": chat_grok,
 }
 
 
@@ -297,13 +325,13 @@ def clear_chat():
 
 # Build the interface
 with gr.Blocks(theme=gr.themes.Soft(), title="Multi-AI Chatbot") as demo:
-    gr.Markdown("# 🤖 Multi-AI Chatbot\nChat with **OpenAI**, **Claude**, or **Gemini** — supports file uploads (images, PDF, Excel, PPT, and more).")
+    gr.Markdown("# 🤖 Multi-AI Chatbot\nChat with **OpenAI**, **Claude**, **Gemini**, or **Grok** — supports file uploads (images, PDF, Excel, PPT, and more).")
 
     with gr.Row():
         # Sidebar
         with gr.Column(scale=1, min_width=280):
             provider = gr.Dropdown(
-                choices=["OpenAI", "Claude", "Gemini"],
+                choices=["OpenAI", "Claude", "Gemini", "Grok"],
                 value="OpenAI",
                 label="AI Provider",
             )
