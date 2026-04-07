@@ -1,13 +1,16 @@
 import base64
 import io
+import math
 import mimetypes
 import os
+import tempfile
 from pathlib import Path
 
 import gradio as gr
 import anthropic
 import google.generativeai as genai
 from openai import OpenAI
+from pydub import AudioSegment
 
 # ---------------------------------------------------------------------------
 # File processing utilities
@@ -20,7 +23,10 @@ SUPPORTED_EXTENSIONS = {
                  ".py", ".js", ".ts", ".java", ".c", ".cpp", ".r", ".sql"],
     "excel": [".xlsx", ".xls"],
     "ppt": [".pptx", ".ppt"],
+    "audio": [".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".wma", ".webm"],
 }
+
+AUDIO_CHUNK_MS = 30_000  # 30 seconds per chunk, same as Whisper
 
 
 def _file_category(filepath: str) -> str:
@@ -76,6 +82,188 @@ def _extract_pdf_text(filepath: str) -> str:
         pages.append(f"=== Page {i} ===\n{page.get_text()}")
     doc.close()
     return "\n\n".join(pages)
+
+
+# ---------------------------------------------------------------------------
+# Audio chunking & transcription (unlimited length, 30s chunks)
+# ---------------------------------------------------------------------------
+
+def _split_audio_chunks(filepath: str, chunk_ms: int = AUDIO_CHUNK_MS) -> list[AudioSegment]:
+    """Split an audio file into fixed-length chunks."""
+    audio = AudioSegment.from_file(filepath)
+    chunks = []
+    for start in range(0, len(audio), chunk_ms):
+        chunks.append(audio[start:start + chunk_ms])
+    return chunks
+
+
+def _chunk_to_bytes(chunk: AudioSegment, fmt: str = "mp3") -> bytes:
+    """Export an AudioSegment chunk to bytes."""
+    buf = io.BytesIO()
+    chunk.export(buf, format=fmt)
+    return buf.getvalue()
+
+
+def transcribe_audio_gemini(filepath: str, api_key: str, model: str,
+                            language_hint: str = "") -> str:
+    """
+    Transcribe an audio file of ANY length using Gemini.
+    Splits into 30-second chunks and processes each one sequentially,
+    just like Whisper does internally.
+    """
+    genai.configure(api_key=api_key)
+    gen_model = genai.GenerativeModel(model_name=model)
+
+    chunks = _split_audio_chunks(filepath)
+    total = len(chunks)
+    audio_duration = AudioSegment.from_file(filepath).duration_seconds
+
+    transcription_parts = []
+
+    lang_instruction = f" The audio language is {language_hint}." if language_hint else ""
+    for i, chunk in enumerate(chunks):
+        audio_bytes = _chunk_to_bytes(chunk, fmt="mp3")
+
+        prompt = (
+            f"Transcribe the following audio accurately and completely. "
+            f"This is chunk {i + 1}/{total} of a longer audio "
+            f"(total duration: {audio_duration:.1f}s).{lang_instruction} "
+            f"Output ONLY the transcribed text, no timestamps, no commentary."
+        )
+
+        response = gen_model.generate_content([
+            prompt,
+            {"mime_type": "audio/mp3", "data": audio_bytes},
+        ])
+
+        text = response.text.strip() if response.text else ""
+        if text:
+            transcription_parts.append(text)
+
+    return "\n".join(transcription_parts)
+
+
+def transcribe_audio_openai(filepath: str, api_key: str, model: str,
+                            language_hint: str = "") -> str:
+    """
+    Transcribe an audio file of ANY length using OpenAI Whisper API.
+    Splits into 30-second chunks for files that exceed API limits.
+    """
+    client = OpenAI(api_key=api_key)
+    chunks = _split_audio_chunks(filepath)
+    transcription_parts = []
+
+    for i, chunk in enumerate(chunks):
+        audio_bytes = _chunk_to_bytes(chunk, fmt="mp3")
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = f"chunk_{i}.mp3"
+
+        kwargs = {"model": model, "file": audio_file}
+        if language_hint:
+            kwargs["language"] = language_hint
+
+        result = client.audio.transcriptions.create(**kwargs)
+        text = result.text.strip() if result.text else ""
+        if text:
+            transcription_parts.append(text)
+
+    return "\n".join(transcription_parts)
+
+
+def transcribe_audio_streaming(filepath: str, api_key: str, model: str,
+                               provider: str, language_hint: str = ""):
+    """
+    Generator that yields progressive transcription results.
+    Shows real-time progress as each chunk completes.
+    """
+    audio = AudioSegment.from_file(filepath)
+    total_duration = audio.duration_seconds
+    chunks = _split_audio_chunks(filepath)
+    total = len(chunks)
+
+    header = (
+        f"🎙️ Audio: {Path(filepath).name}\n"
+        f"⏱️ Duration: {total_duration:.1f}s | "
+        f"📦 Chunks: {total} (30s each)\n"
+        f"🔄 Model: {model}\n\n"
+        f"---\n\n"
+    )
+
+    transcription_parts = []
+    progress_text = header + "Transcribing...\n\n"
+    yield progress_text
+
+    if provider == "Gemini":
+        genai.configure(api_key=api_key)
+        gen_model = genai.GenerativeModel(model_name=model)
+
+        lang_instruction = f" The audio language is {language_hint}." if language_hint else ""
+        for i, chunk in enumerate(chunks):
+            audio_bytes = _chunk_to_bytes(chunk, fmt="mp3")
+            chunk_start = i * 30
+            chunk_end = min((i + 1) * 30, total_duration)
+
+            prompt = (
+                f"Transcribe the following audio accurately and completely. "
+                f"This is chunk {i + 1}/{total} of a longer audio "
+                f"(total duration: {total_duration:.1f}s).{lang_instruction} "
+                f"Output ONLY the transcribed text, no timestamps, no commentary."
+            )
+
+            response = gen_model.generate_content([
+                prompt,
+                {"mime_type": "audio/mp3", "data": audio_bytes},
+            ])
+
+            text = response.text.strip() if response.text else ""
+            if text:
+                transcription_parts.append(text)
+
+            progress = (i + 1) / total * 100
+            progress_text = (
+                header
+                + f"Progress: {i + 1}/{total} chunks ({progress:.0f}%) "
+                + f"[{chunk_start:.0f}s - {chunk_end:.0f}s]\n\n"
+                + "---\n\n"
+                + "\n".join(transcription_parts)
+            )
+            yield progress_text
+
+    elif provider == "OpenAI":
+        client = OpenAI(api_key=api_key)
+        for i, chunk in enumerate(chunks):
+            audio_bytes = _chunk_to_bytes(chunk, fmt="mp3")
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = f"chunk_{i}.mp3"
+            chunk_start = i * 30
+            chunk_end = min((i + 1) * 30, total_duration)
+
+            kwargs = {"model": model, "file": audio_file}
+            if language_hint:
+                kwargs["language"] = language_hint
+            result = client.audio.transcriptions.create(**kwargs)
+            text = result.text.strip() if result.text else ""
+            if text:
+                transcription_parts.append(text)
+
+            progress = (i + 1) / total * 100
+            progress_text = (
+                header
+                + f"Progress: {i + 1}/{total} chunks ({progress:.0f}%) "
+                + f"[{chunk_start:.0f}s - {chunk_end:.0f}s]\n\n"
+                + "---\n\n"
+                + "\n".join(transcription_parts)
+            )
+            yield progress_text
+
+    # Final output
+    final = (
+        header
+        + f"✅ Completed! {total} chunks transcribed.\n\n"
+        + "---\n\n"
+        + "\n".join(transcription_parts)
+    )
+    yield final
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +374,8 @@ def _build_gemini_file_content(filepath: str):
     mime = mimetypes.guess_type(filepath)[0] or "application/octet-stream"
 
     if category == "image":
+        return [{"mime_type": mime, "data": _read_bytes(filepath)}]
+    elif category == "audio":
         return [{"mime_type": mime, "data": _read_bytes(filepath)}]
     elif category == "pdf":
         text = _extract_pdf_text(filepath)
@@ -323,67 +513,150 @@ def clear_chat():
     return [], None
 
 
+TRANSCRIPTION_MODELS = {
+    "Gemini": ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash",
+               "gemini-3.1-flash", "gemini-3.1-pro"],
+    "OpenAI": ["whisper-1", "gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+}
+
+
+def update_transcription_models(provider):
+    models = TRANSCRIPTION_MODELS.get(provider, [])
+    return gr.Dropdown(choices=models, value=models[0] if models else "")
+
+
+def run_transcription(audio_file, provider, model, api_key, language_hint):
+    if not audio_file:
+        yield "Please upload an audio file."
+        return
+    if not api_key:
+        yield f"Please enter your {provider} API Key."
+        return
+
+    filepath = audio_file.name if hasattr(audio_file, "name") else str(audio_file)
+
+    try:
+        for progress in transcribe_audio_streaming(
+            filepath, api_key, model, provider, language_hint
+        ):
+            yield progress
+    except Exception as e:
+        yield f"❌ Error: {str(e)}"
+
+
 # Build the interface
 with gr.Blocks(theme=gr.themes.Soft(), title="Multi-AI Chatbot") as demo:
-    gr.Markdown("# 🤖 Multi-AI Chatbot\nChat with **OpenAI**, **Claude**, **Gemini**, or **Grok** — supports file uploads (images, PDF, Excel, PPT, and more).")
+    gr.Markdown("# 🤖 Multi-AI Chatbot\nChat with **OpenAI**, **Claude**, **Gemini**, or **Grok** — supports file uploads and unlimited audio transcription.")
 
-    with gr.Row():
-        # Sidebar
-        with gr.Column(scale=1, min_width=280):
-            provider = gr.Dropdown(
-                choices=["OpenAI", "Claude", "Gemini", "Grok"],
-                value="OpenAI",
-                label="AI Provider",
-            )
-            model = gr.Dropdown(
-                choices=PROVIDER_MODELS["OpenAI"],
-                value=PROVIDER_MODELS["OpenAI"][0],
-                label="Model",
-            )
-            api_key = gr.Textbox(
-                label="API Key",
-                type="password",
-                placeholder="Enter your API key...",
-            )
-            system_prompt = gr.Textbox(
-                label="System Prompt",
-                value="You are a helpful assistant. Answer in the same language the user uses.",
-                lines=3,
-            )
-            uploaded_files = gr.File(
-                label="Upload Files",
-                file_count="multiple",
-                file_types=[
-                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
-                    ".pdf", ".txt", ".md", ".csv", ".json", ".xml",
-                    ".html", ".py", ".js", ".ts", ".java", ".c", ".cpp",
-                    ".r", ".sql", ".xlsx", ".xls", ".pptx", ".ppt",
-                ],
-            )
+    with gr.Tabs():
+        # ============== Tab 1: Chat ==============
+        with gr.Tab("💬 Chat"):
+            with gr.Row():
+                # Sidebar
+                with gr.Column(scale=1, min_width=280):
+                    provider = gr.Dropdown(
+                        choices=["OpenAI", "Claude", "Gemini", "Grok"],
+                        value="OpenAI",
+                        label="AI Provider",
+                    )
+                    model = gr.Dropdown(
+                        choices=PROVIDER_MODELS["OpenAI"],
+                        value=PROVIDER_MODELS["OpenAI"][0],
+                        label="Model",
+                    )
+                    api_key = gr.Textbox(
+                        label="API Key",
+                        type="password",
+                        placeholder="Enter your API key...",
+                    )
+                    system_prompt = gr.Textbox(
+                        label="System Prompt",
+                        value="You are a helpful assistant. Answer in the same language the user uses.",
+                        lines=3,
+                    )
+                    uploaded_files = gr.File(
+                        label="Upload Files",
+                        file_count="multiple",
+                        file_types=[
+                            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+                            ".pdf", ".txt", ".md", ".csv", ".json", ".xml",
+                            ".html", ".py", ".js", ".ts", ".java", ".c", ".cpp",
+                            ".r", ".sql", ".xlsx", ".xls", ".pptx", ".ppt",
+                            ".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac",
+                        ],
+                    )
+                    gr.Markdown(
+                        "**Supported files:** Images, PDF, TXT, CSV, JSON, "
+                        "Excel (.xlsx), PowerPoint (.pptx), audio files, code files, and more."
+                    )
+
+                # Chat area
+                with gr.Column(scale=3):
+                    chatbot = gr.Chatbot(
+                        height=600,
+                        type="messages",
+                        show_copy_button=True,
+                        placeholder="Select a provider, enter your API key, and start chatting!",
+                    )
+                    with gr.Row():
+                        msg = gr.Textbox(
+                            placeholder="Type your message here...",
+                            show_label=False,
+                            scale=6,
+                            container=False,
+                        )
+                        send_btn = gr.Button("Send", variant="primary", scale=1)
+                        clear_btn = gr.Button("Clear", scale=1)
+
+        # ============== Tab 2: Audio Transcription ==============
+        with gr.Tab("🎙️ Audio Transcription"):
             gr.Markdown(
-                "**Supported files:** Images, PDF, TXT, CSV, JSON, "
-                "Excel (.xlsx), PowerPoint (.pptx), code files, and more."
-            )
-
-        # Chat area
-        with gr.Column(scale=3):
-            chatbot = gr.Chatbot(
-                height=600,
-                type="messages",
-                show_copy_button=True,
-                placeholder="Select a provider, enter your API key, and start chatting!",
+                "### Unlimited Audio Transcription\n"
+                "Upload audio of **any length**. The file is split into 30-second chunks "
+                "and transcribed sequentially — just like Whisper does internally.\n\n"
+                "Supports: MP3, WAV, M4A, OGG, FLAC, AAC, WMA, WebM"
             )
             with gr.Row():
-                msg = gr.Textbox(
-                    placeholder="Type your message here...",
-                    show_label=False,
-                    scale=6,
-                    container=False,
-                )
-                send_btn = gr.Button("Send", variant="primary", scale=1)
-                clear_btn = gr.Button("Clear", scale=1)
+                with gr.Column(scale=1, min_width=280):
+                    stt_provider = gr.Dropdown(
+                        choices=["Gemini", "OpenAI"],
+                        value="Gemini",
+                        label="Transcription Provider",
+                    )
+                    stt_model = gr.Dropdown(
+                        choices=TRANSCRIPTION_MODELS["Gemini"],
+                        value=TRANSCRIPTION_MODELS["Gemini"][0],
+                        label="Model",
+                    )
+                    stt_api_key = gr.Textbox(
+                        label="API Key",
+                        type="password",
+                        placeholder="Enter your API key...",
+                    )
+                    stt_language = gr.Textbox(
+                        label="Language Hint (optional)",
+                        placeholder="e.g. zh, en, ja, ko...",
+                    )
+                    stt_audio = gr.File(
+                        label="Upload Audio File",
+                        file_count="single",
+                        file_types=[
+                            ".mp3", ".wav", ".m4a", ".ogg", ".flac",
+                            ".aac", ".wma", ".webm",
+                        ],
+                    )
+                    stt_btn = gr.Button("🎙️ Start Transcription", variant="primary")
 
-    # Events
+                with gr.Column(scale=3):
+                    stt_output = gr.Textbox(
+                        label="Transcription Result",
+                        lines=25,
+                        show_copy_button=True,
+                        interactive=False,
+                    )
+
+    # ============== Events ==============
+    # Chat tab
     provider.change(fn=update_model_choices, inputs=provider, outputs=model)
 
     send_btn.click(
@@ -399,6 +672,15 @@ with gr.Blocks(theme=gr.themes.Soft(), title="Multi-AI Chatbot") as demo:
     ).then(lambda: ("", None), outputs=[msg, uploaded_files])
 
     clear_btn.click(fn=clear_chat, outputs=[chatbot, uploaded_files])
+
+    # Audio transcription tab
+    stt_provider.change(fn=update_transcription_models, inputs=stt_provider, outputs=stt_model)
+
+    stt_btn.click(
+        fn=run_transcription,
+        inputs=[stt_audio, stt_provider, stt_model, stt_api_key, stt_language],
+        outputs=stt_output,
+    )
 
 if __name__ == "__main__":
     demo.launch()
