@@ -1,0 +1,18 @@
+# WhisperX and core dependencies
+whisperx>=3.1.1
+
+# PyTorch (CUDA 12.x for GPU acceleration)
+# Install manually if needed: https://pytorch.org/get-started/locally/
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Speaker diarization (optional, requires HuggingFace token)
+pyannote.audio>=3.1.0
+
+# Audio processing
+ffmpeg-python>=0.2.0
+pydub>=0.25.1
+
+# Output / utilities
+pandas>=2.0.0
+tqdm>=4.65.0

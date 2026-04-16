@@ -1,0 +1,17 @@
+{
+  "_comment": "WhisperX 設定檔。CLI 參數優先於此檔案，環境變數 HF_TOKEN 優先於 hf_token 欄位。",
+
+  "model": "large-v2",
+  "language": null,
+  "device": "cuda",
+  "compute_type": "float16",
+  "batch_size": 16,
+
+  "diarize": false,
+  "hf_token": "",
+  "min_speakers": null,
+  "max_speakers": null,
+
+  "output_dir": "output",
+  "output_format": "all"
+}
