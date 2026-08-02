@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import unicodedata
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -24,8 +25,10 @@ import torch
 from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
+from opencc import OpenCC
 from pyannote.audio import Pipeline
 from qwen_asr import Qwen3ASRModel
+from rapidfuzz.distance import Levenshtein
 
 ROOT = Path(__file__).resolve().parent
 WHISPER_DIR = ROOT / "models" / "faster-whisper-large-v2"
@@ -49,6 +52,8 @@ class ModelBundle:
 MODEL_CACHE_KEY: tuple[str, ...] | None = None
 MODEL_CACHE: ModelBundle | None = None
 MODEL_LOCK = threading.Lock()
+SIMILARITY_THRESHOLD = 0.90
+T2S_CONVERTER = OpenCC("t2s")
 
 PROMPT = (
     "台灣金融業客服電話逐字稿。內容可能包含投信、投顧、基金、ETF、淨值、申購、贖回、"
@@ -119,6 +124,34 @@ def join_texts(parts: list[str]) -> str:
     for part in parts:
         text = append_text(text, part.strip())
     return text.strip()
+
+
+def normalize_for_similarity(text: str) -> str:
+    """Normalize script and formatting without changing the displayed transcript."""
+    normalized = unicodedata.normalize("NFKC", text or "").lower()
+    normalized = T2S_CONVERTER.convert(normalized)
+    kept = []
+    for index, char in enumerate(normalized):
+        if char.isalnum():
+            kept.append(char)
+        elif char == "%":
+            kept.append(char)
+        elif (
+            char in ".-/"
+            and 0 < index < len(normalized) - 1
+            and normalized[index - 1].isdigit()
+            and normalized[index + 1].isdigit()
+        ):
+            kept.append(char)
+    return "".join(kept)
+
+
+def transcript_similarity(primary_text: str, comparison_text: str) -> float:
+    primary = normalize_for_similarity(primary_text)
+    comparison = normalize_for_similarity(comparison_text)
+    if not primary or not comparison:
+        return 0.0
+    return float(Levenshtein.normalized_similarity(primary, comparison))
 
 
 def get_device(device_ui: str, compute_ui: str) -> tuple[str, str]:
@@ -494,7 +527,13 @@ def save_result(result: dict[str, Any], source_name: str) -> list[str]:
     txt_path = folder / f"{stem}.txt"
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    lines = ["TEA-ASR-1.1 主逐字稿（Qwen3-ForcedAligner 時間戳）", ""]
+    comparison = result["model_comparison"]
+    review_text = "建議人工再檢查" if comparison["needs_manual_review"] else "相似度已達 90%"
+    lines = [
+        "TEA-ASR-1.1 主逐字稿（Qwen3-ForcedAligner 時間戳）",
+        f"與 Whisper large-v2 相似度：{comparison['similarity_percent']:.2f}%（{review_text}）",
+        "",
+    ]
     for row in result["transcript"]:
         flag = "【疑似同時說話】" if row["suspected_overlap"] else ""
         lines.append(
@@ -564,6 +603,8 @@ def process(
                 prompt,
                 hotwords,
             )
+            similarity = transcript_similarity(tea_info["text"], whisper_info["text"])
+            needs_manual_review = similarity < SIMILARITY_THRESHOLD
 
             progress(0.72, desc="Pyannote Community-1 判斷說話者 A/B")
             diarization_output = bundle.diarizer(str(normalized), num_speakers=2)
@@ -593,6 +634,12 @@ def process(
                 "vad_regions": speech_regions,
                 "tea_asr": tea_info,
                 "whisper_v2": whisper_info,
+                "model_comparison": {
+                    "method": "normalized_levenshtein_similarity",
+                    "similarity_percent": round(similarity * 100.0, 2),
+                    "threshold_percent": SIMILARITY_THRESHOLD * 100.0,
+                    "needs_manual_review": needs_manual_review,
+                },
                 "speaker_mapping": aliases,
                 "overlap_regions": overlaps,
                 "speaker_turns": turns,
@@ -602,9 +649,14 @@ def process(
 
         overlap_count = sum(row["suspected_overlap"] for row in transcript)
         progress(1.0, desc="完成")
+        similarity_percent = similarity * 100.0
+        if needs_manual_review:
+            review_message = "⚠️ 低於 90%，建議人工再檢查。"
+        else:
+            review_message = "✅ 已達 90%，採用 TEA 主稿。"
         status = (
-            f"完成：TEA 主稿共 {len(transcript)} 段，其中 {overlap_count} 段疑似同時說話。"
-            "Whisper v2 比對稿顯示在下方，模型不同時請人工複核。"
+            f"完成：TEA 主稿共 {len(transcript)} 段，其中 {overlap_count} 段疑似同時說話。  \n"
+            f"兩模型文字相似度：**{similarity_percent:.2f}%**。{review_message}"
         )
         return status, to_html(transcript), whisper_info["text"], files, result
     except Exception as exc:
@@ -619,7 +671,8 @@ with gr.Blocks(css=CSS, js=JS, title="台灣金融業電話逐字稿") as demo:
     gr.Markdown(
         "# 台灣金融業電話逐字稿\n"
         "TEA-ASR-1.1 主稿＋Whisper large-v2 比對稿；Qwen3-ForcedAligner 時間戳；"
-        "Pyannote Community-1 說話者 A／B。點擊主逐字稿可跳到該時間播放。"
+        "Pyannote Community-1 說話者 A／B。相似度低於 90% 時提醒人工檢查。"
+        "點擊主逐字稿可跳到該時間播放。"
     )
     with gr.Row():
         audio = gr.Audio(label="上傳單聲道電話錄音", sources=["upload"], type="filepath", elem_id="audio_player")
