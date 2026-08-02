@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import tempfile
 import threading
-import unicodedata
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
@@ -25,10 +24,10 @@ import torch
 from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
-from opencc import OpenCC
 from pyannote.audio import Pipeline
 from qwen_asr import Qwen3ASRModel
-from rapidfuzz.distance import Levenshtein
+
+from comparison import SIMILARITY_THRESHOLD, append_text, join_texts, score_time_aligned_segments
 
 ROOT = Path(__file__).resolve().parent
 WHISPER_DIR = ROOT / "models" / "faster-whisper-large-v2"
@@ -52,8 +51,6 @@ class ModelBundle:
 MODEL_CACHE_KEY: tuple[str, ...] | None = None
 MODEL_CACHE: ModelBundle | None = None
 MODEL_LOCK = threading.Lock()
-SIMILARITY_THRESHOLD = 0.90
-T2S_CONVERTER = OpenCC("t2s")
 
 PROMPT = (
     "台灣金融業客服電話逐字稿。內容可能包含投信、投顧、基金、ETF、淨值、申購、贖回、"
@@ -73,8 +70,15 @@ CSS = """
 padding:12px;border:1px solid var(--border-color-primary);border-radius:10px;
 background:var(--background-fill-secondary);color:var(--body-text-color);text-align:left;cursor:pointer}
 .transcript-row:hover,.transcript-row.active{border-color:var(--color-accent);background:var(--background-fill-primary)}
-.transcript-row.overlap{border-left:5px solid #d97706}.time,.speaker{font-weight:700}
+.transcript-row.overlap{border-left:5px solid #d97706}
+.transcript-row.review{border:2px solid #dc2626;border-left:7px solid #dc2626;background:rgba(220,38,38,.10)}
+.transcript-row.review:hover,.transcript-row.review.active{border-color:#b91c1c;background:rgba(220,38,38,.16)}
+.time,.speaker{font-weight:700}.transcript-content,.transcript-text,.comparison-text{display:block}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px}
 .overlap-label{margin-right:7px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:.85em}
+.score-label,.review-label{padding:2px 8px;border-radius:999px;font-size:.85em;font-weight:700}
+.score-label{background:#dcfce7;color:#166534}.review-label{background:#dc2626;color:#fff}
+.comparison-text{margin-top:7px;padding:7px 9px;border-radius:7px;background:rgba(220,38,38,.12);font-size:.92em}
 .empty{padding:25px;border:1px dashed var(--border-color-primary);border-radius:10px;text-align:center}
 """
 
@@ -102,56 +106,6 @@ def overlap_seconds(a1: float, a2: float, b1: float, b2: float) -> float:
 def time_text(seconds: float) -> str:
     minutes = int(seconds // 60)
     return f"{minutes:02d}:{seconds - minutes * 60:05.2f}"
-
-
-def append_text(current: str, addition: str) -> str:
-    """Join ASR units without introducing spaces between Chinese characters."""
-    if not addition:
-        return current
-    if not current:
-        return addition.lstrip()
-    if addition[0].isspace() or current[-1].isspace():
-        return current + addition
-    left = current[-1]
-    right = addition[0]
-    if left.isascii() and right.isascii() and left.isalnum() and right.isalnum():
-        return current + " " + addition
-    return current + addition
-
-
-def join_texts(parts: list[str]) -> str:
-    text = ""
-    for part in parts:
-        text = append_text(text, part.strip())
-    return text.strip()
-
-
-def normalize_for_similarity(text: str) -> str:
-    """Normalize script and formatting without changing the displayed transcript."""
-    normalized = unicodedata.normalize("NFKC", text or "").lower()
-    normalized = T2S_CONVERTER.convert(normalized)
-    kept = []
-    for index, char in enumerate(normalized):
-        if char.isalnum():
-            kept.append(char)
-        elif char == "%":
-            kept.append(char)
-        elif (
-            char in ".-/"
-            and 0 < index < len(normalized) - 1
-            and normalized[index - 1].isdigit()
-            and normalized[index + 1].isdigit()
-        ):
-            kept.append(char)
-    return "".join(kept)
-
-
-def transcript_similarity(primary_text: str, comparison_text: str) -> float:
-    primary = normalize_for_similarity(primary_text)
-    comparison = normalize_for_similarity(comparison_text)
-    if not primary or not comparison:
-        return 0.0
-    return float(Levenshtein.normalized_similarity(primary, comparison))
 
 
 def get_device(device_ui: str, compute_ui: str) -> tuple[str, str]:
@@ -400,11 +354,21 @@ def whisper_transcript(
             "max_speech_duration_s": 28,
         },
     )
-    segment_rows = [
-        {"start": float(segment.start), "end": float(segment.end), "text": segment.text.strip()}
-        for segment in segments
-        if segment.text.strip()
-    ]
+    segment_rows = []
+    word_rows = []
+    for segment in segments:
+        segment_text = segment.text.strip()
+        if segment_text:
+            segment_rows.append(
+                {"start": float(segment.start), "end": float(segment.end), "text": segment_text}
+            )
+        for word in segment.words or []:
+            word_text = str(word.word).strip()
+            if not word_text or word.start is None or word.end is None:
+                continue
+            word_rows.append(
+                {"start": float(word.start), "end": float(word.end), "text": word_text}
+            )
     return {
         "language": info.language,
         "language_probability": float(info.language_probability),
@@ -412,6 +376,7 @@ def whisper_transcript(
         "duration_after_vad": float(getattr(info, "duration_after_vad", info.duration)),
         "text": join_texts([item["text"] for item in segment_rows]),
         "segments": segment_rows,
+        "words": word_rows,
     }
 
 
@@ -503,12 +468,33 @@ def to_html(rows: list[dict[str, Any]]) -> str:
     result = ['<div class="transcript-list">']
     for row in rows:
         css_class = " overlap" if row["suspected_overlap"] else ""
-        badge = '<span class="overlap-label">疑似同時說話</span>' if row["suspected_overlap"] else ""
+        needs_review = bool(row.get("needs_manual_review", False))
+        if needs_review:
+            css_class += " review"
+        badges = []
+        if row["suspected_overlap"]:
+            badges.append('<span class="overlap-label">疑似同時說話</span>')
+        similarity_percent = float(row.get("similarity_percent", 0.0))
+        if needs_review:
+            badges.append(
+                f'<span class="review-label">⚠ 需人工檢查 · {similarity_percent:.2f}%</span>'
+            )
+        else:
+            badges.append(f'<span class="score-label">相似度 {similarity_percent:.2f}%</span>')
+        comparison_text = str(row.get("comparison_text", "")).strip() or "（Whisper 此時段沒有文字）"
+        comparison_html = (
+            f'<span class="comparison-text"><strong>Whisper 比對：</strong>'
+            f'{html.escape(comparison_text)}</span>'
+            if needs_review
+            else ""
+        )
         result.append(
             f'<button type="button" class="transcript-row{css_class}" data-start="{row["start"]:.3f}">'
             f'<span class="time">{time_text(row["start"])}</span>'
             f'<span class="speaker">說話者 {html.escape(row["speaker"])}</span>'
-            f'<span>{badge}{html.escape(row["text"])}</span></button>'
+            f'<span class="transcript-content"><span class="badges">{"".join(badges)}</span>'
+            f'<span class="transcript-text">{html.escape(row["text"])}</span>'
+            f'{comparison_html}</span></button>'
         )
     return "".join(result) + "</div>"
 
@@ -528,18 +514,27 @@ def save_result(result: dict[str, Any], source_name: str) -> list[str]:
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     comparison = result["model_comparison"]
-    review_text = "建議人工再檢查" if comparison["needs_manual_review"] else "相似度已達 90%"
+    review_count = int(comparison["manual_review_segment_count"])
+    review_text = f"{review_count} 段需人工檢查" if review_count else "所有段落均達 90%"
     lines = [
         "TEA-ASR-1.1 主逐字稿（Qwen3-ForcedAligner 時間戳）",
-        f"與 Whisper large-v2 相似度：{comparison['similarity_percent']:.2f}%（{review_text}）",
+        f"時間對齊後的加權相似度：{comparison['similarity_percent']:.2f}%（{review_text}）",
         "",
     ]
     for row in result["transcript"]:
-        flag = "【疑似同時說話】" if row["suspected_overlap"] else ""
+        flags = []
+        if row["suspected_overlap"]:
+            flags.append("【疑似同時說話】")
+        if row["needs_manual_review"]:
+            flags.append("【需人工檢查】")
+        flags.append(f"【相似度 {row['similarity_percent']:.2f}%】")
         lines.append(
             f"[{time_text(row['start'])} - {time_text(row['end'])}] "
-            f"{flag}說話者 {row['speaker']}：{row['text']}"
+            f"{''.join(flags)}說話者 {row['speaker']}：{row['text']}"
         )
+        if row["needs_manual_review"]:
+            whisper_text = row["comparison_text"] or "（Whisper 此時段沒有文字）"
+            lines.append(f"    Whisper 比對：{whisper_text}")
     lines.extend(["", "Whisper large-v2 比對稿（不自動覆蓋主稿）", "", result["whisper_v2"]["text"]])
     txt_path.write_text("\n".join(lines), encoding="utf-8-sig")
     return [str(json_path), str(txt_path)]
@@ -603,8 +598,6 @@ def process(
                 prompt,
                 hotwords,
             )
-            similarity = transcript_similarity(tea_info["text"], whisper_info["text"])
-            needs_manual_review = similarity < SIMILARITY_THRESHOLD
 
             progress(0.72, desc="Pyannote Community-1 判斷說話者 A/B")
             diarization_output = bundle.diarizer(str(normalized), num_speakers=2)
@@ -615,9 +608,16 @@ def process(
             turns = annotation_turns(exclusive)
             aliases = aliases_from(turns)
 
-            progress(0.87, desc="合併時間戳、說話者及重疊標記")
+            progress(0.87, desc="依時間對齊逐段計算相似度")
             overlaps = overlap_regions(regular, float(min_overlap))
             transcript = merge_results(aligned_items, turns, overlaps, aliases, float(overlap_ratio))
+            transcript, similarity, alignment_source = score_time_aligned_segments(
+                transcript,
+                whisper_info["words"],
+                whisper_info["segments"],
+            )
+            review_count = sum(row["needs_manual_review"] for row in transcript)
+            needs_manual_review = not transcript or review_count > 0
             result = {
                 "audio_file": Path(audio_path).name,
                 "pipeline": {
@@ -635,9 +635,12 @@ def process(
                 "tea_asr": tea_info,
                 "whisper_v2": whisper_info,
                 "model_comparison": {
-                    "method": "normalized_levenshtein_similarity",
+                    "method": "time_aligned_segment_normalized_levenshtein_similarity",
+                    "alignment_source": alignment_source,
                     "similarity_percent": round(similarity * 100.0, 2),
                     "threshold_percent": SIMILARITY_THRESHOLD * 100.0,
+                    "segment_count": len(transcript),
+                    "manual_review_segment_count": review_count,
                     "needs_manual_review": needs_manual_review,
                 },
                 "speaker_mapping": aliases,
@@ -650,13 +653,15 @@ def process(
         overlap_count = sum(row["suspected_overlap"] for row in transcript)
         progress(1.0, desc="完成")
         similarity_percent = similarity * 100.0
-        if needs_manual_review:
-            review_message = "⚠️ 低於 90%，建議人工再檢查。"
+        if not transcript:
+            review_message = "⚠️ 沒有可評分段落，請人工檢查。"
+        elif review_count:
+            review_message = f"⚠️ {review_count} 段低於 90%，已用紅色標示。"
         else:
-            review_message = "✅ 已達 90%，採用 TEA 主稿。"
+            review_message = "✅ 所有段落均達 90%。"
         status = (
             f"完成：TEA 主稿共 {len(transcript)} 段，其中 {overlap_count} 段疑似同時說話。  \n"
-            f"兩模型文字相似度：**{similarity_percent:.2f}%**。{review_message}"
+            f"時間對齊後的加權相似度：**{similarity_percent:.2f}%**。{review_message}"
         )
         return status, to_html(transcript), whisper_info["text"], files, result
     except Exception as exc:
@@ -671,7 +676,7 @@ with gr.Blocks(css=CSS, js=JS, title="台灣金融業電話逐字稿") as demo:
     gr.Markdown(
         "# 台灣金融業電話逐字稿\n"
         "TEA-ASR-1.1 主稿＋Whisper large-v2 比對稿；Qwen3-ForcedAligner 時間戳；"
-        "Pyannote Community-1 說話者 A／B。相似度低於 90% 時提醒人工檢查。"
+        "Pyannote Community-1 說話者 A／B。兩份文字依時間逐段比較，低於 90% 的段落會標紅。"
         "點擊主逐字稿可跳到該時間播放。"
     )
     with gr.Row():
