@@ -71,14 +71,11 @@ padding:12px;border:1px solid var(--border-color-primary);border-radius:10px;
 background:var(--background-fill-secondary);color:var(--body-text-color);text-align:left;cursor:pointer}
 .transcript-row:hover,.transcript-row.active{border-color:var(--color-accent);background:var(--background-fill-primary)}
 .transcript-row.overlap{border-left:5px solid #d97706}
-.transcript-row.review{border:2px solid #dc2626;border-left:7px solid #dc2626;background:rgba(220,38,38,.10)}
-.transcript-row.review:hover,.transcript-row.review.active{border-color:#b91c1c;background:rgba(220,38,38,.16)}
-.time,.speaker{font-weight:700}.transcript-content,.transcript-text,.comparison-text{display:block}
+.transcript-row.review .transcript-text{color:#dc2626;font-weight:700}
+.time,.speaker{font-weight:700}.transcript-content,.transcript-text{display:block}
 .badges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:5px}
 .overlap-label{margin-right:7px;padding:1px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:.85em}
-.score-label,.review-label{padding:2px 8px;border-radius:999px;font-size:.85em;font-weight:700}
-.score-label{background:#dcfce7;color:#166534}.review-label{background:#dc2626;color:#fff}
-.comparison-text{margin-top:7px;padding:7px 9px;border-radius:7px;background:rgba(220,38,38,.12);font-size:.92em}
+.score-label{font-size:.85em;font-weight:700;color:var(--body-text-color-subdued)}
 .empty{padding:25px;border:1px dashed var(--border-color-primary);border-radius:10px;text-align:center}
 """
 
@@ -475,26 +472,13 @@ def to_html(rows: list[dict[str, Any]]) -> str:
         if row["suspected_overlap"]:
             badges.append('<span class="overlap-label">疑似同時說話</span>')
         similarity_percent = float(row.get("similarity_percent", 0.0))
-        if needs_review:
-            badges.append(
-                f'<span class="review-label">⚠ 需人工檢查 · {similarity_percent:.2f}%</span>'
-            )
-        else:
-            badges.append(f'<span class="score-label">相似度 {similarity_percent:.2f}%</span>')
-        comparison_text = str(row.get("comparison_text", "")).strip() or "（Whisper 此時段沒有文字）"
-        comparison_html = (
-            f'<span class="comparison-text"><strong>Whisper 比對：</strong>'
-            f'{html.escape(comparison_text)}</span>'
-            if needs_review
-            else ""
-        )
+        badges.append(f'<span class="score-label">相似度 {similarity_percent:.2f}%</span>')
         result.append(
             f'<button type="button" class="transcript-row{css_class}" data-start="{row["start"]:.3f}">'
             f'<span class="time">{time_text(row["start"])}</span>'
             f'<span class="speaker">說話者 {html.escape(row["speaker"])}</span>'
             f'<span class="transcript-content"><span class="badges">{"".join(badges)}</span>'
-            f'<span class="transcript-text">{html.escape(row["text"])}</span>'
-            f'{comparison_html}</span></button>'
+            f'<span class="transcript-text">{html.escape(row["text"])}</span></span></button>'
         )
     return "".join(result) + "</div>"
 
@@ -525,16 +509,11 @@ def save_result(result: dict[str, Any], source_name: str) -> list[str]:
         flags = []
         if row["suspected_overlap"]:
             flags.append("【疑似同時說話】")
-        if row["needs_manual_review"]:
-            flags.append("【需人工檢查】")
         flags.append(f"【相似度 {row['similarity_percent']:.2f}%】")
         lines.append(
             f"[{time_text(row['start'])} - {time_text(row['end'])}] "
             f"{''.join(flags)}說話者 {row['speaker']}：{row['text']}"
         )
-        if row["needs_manual_review"]:
-            whisper_text = row["comparison_text"] or "（Whisper 此時段沒有文字）"
-            lines.append(f"    Whisper 比對：{whisper_text}")
     lines.extend(["", "Whisper large-v2 比對稿（不自動覆蓋主稿）", "", result["whisper_v2"]["text"]])
     txt_path.write_text("\n".join(lines), encoding="utf-8-sig")
     return [str(json_path), str(txt_path)]
