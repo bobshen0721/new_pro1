@@ -2,3 +2,4 @@ gradio>=5.49,<7
 faster-whisper>=1.2,<2
 pyannote.audio>=4.0,<5
 huggingface-hub>=0.34,<2
+qwen-asr==0.0.6
