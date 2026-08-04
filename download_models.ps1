@@ -2,8 +2,8 @@ param([string]$ModelRoot = (Join-Path $PSScriptRoot "models"))
 $ErrorActionPreference = "Stop"
 
 if (-not $env:HF_TOKEN) {
-  Write-Host "請先設定新的 HF_TOKEN：" -ForegroundColor Yellow
-  Write-Host '$env:HF_TOKEN="hf_你的新權杖"'
+  Write-Host "Set a read-only HF_TOKEN first:" -ForegroundColor Yellow
+  Write-Host '$env:HF_TOKEN="hf_your_read_token"'
   exit 1
 }
 
@@ -26,12 +26,12 @@ for repo_id, folder in [
     ("pyannote/speaker-diarization-community-1", "pyannote-community-1"),
 ]:
     target = root / folder
-    print(f"下載 {repo_id} -> {target}")
+    print(f"Downloading {repo_id} -> {target}")
     snapshot_download(repo_id=repo_id, local_dir=str(target), token=token)
 
-print("完成。請把整個 models 資料夾帶進公司環境。")
+print("Done. Copy the complete models directory to the offline environment.")
 '@ | python -
 
 if ($LASTEXITCODE -ne 0) {
-  throw "模型下載失敗。請確認已接受 pyannote 模型條款。"
+  throw "Model download failed. Confirm that the pyannote model conditions were accepted."
 }
