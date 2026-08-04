@@ -36,8 +36,10 @@ new_pro1/
 ├─ requirements.txt
 ├─ run.bat
 ├─ download_models.ps1
+├─ restore_release_models.ps1
+├─ MODEL_RELEASE.md
 ├─ TUNING_GUIDE.md
-├─ models/                             # 不上傳 GitHub
+├─ models/                             # 不提交 Git；公開模型由 Release 分片提供
 │  ├─ faster-whisper-large-v2/
 │  ├─ TEA-ASR-1.1/
 │  ├─ Qwen3-ForcedAligner-0.6B/
@@ -64,6 +66,17 @@ $env:HF_TOKEN="hf_你的唯讀權杖"
 - `pyannote/speaker-diarization-community-1`
 
 完成後，把整個 `models` 資料夾帶進公司環境。
+
+### 使用 GitHub Release 下載公開模型
+
+GitHub Release `models-v1` 提供 Whisper large-v2、TEA-ASR-1.1 與 Qwen3-ForcedAligner-0.6B 的切分封裝。下載 Release 內的 `restore_release_models.ps1` 與 `model-release-manifest.json` 後執行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\restore_release_models.ps1 -ReleaseTag models-v1
+```
+
+腳本會驗證每個分片及重組封裝的 SHA-256。Pyannote Community-1 不包含在 Release；每位使用者仍須在 Hugging Face 接受條款，並使用自己的唯讀 HF Token 下載。模型來源、授權與完整說明請看 [MODEL_RELEASE.md](MODEL_RELEASE.md)。
 
 ## 二、Windows 11 安裝
 
@@ -133,7 +146,7 @@ A 是該通電話中最早被模型辨識到的說話者，B 是另一位。A �
 ## 離線與安全注意事項
 
 - 啟動時會設定 Hugging Face 與 Transformers 離線模式；四個模型必須已完整下載。
-- 不要把電話錄音、模型、輸出結果或權杖提交到 GitHub。
+- 不要把電話錄音、模型權重、輸出結果或權杖提交到 Git 歷史。三個公開模型只透過 Release 分片發布；Pyannote 不鏡像到 GitHub。
 - 服務預設只監聽 `127.0.0.1`，不會直接開放給其他電腦。
 - 金額、日期、帳號、證券代號及疑似重疊段落，正式使用前必須人工複核。
 - 導入金融業正式環境前，應依公司個資、錄音保存、權限及稽核規範評估。
