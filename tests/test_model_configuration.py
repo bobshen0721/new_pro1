@@ -40,14 +40,7 @@ class ModelConfigurationTests(unittest.TestCase):
     def test_models_v2_release_contains_mini(self):
         self.assertEqual(self.release_manifest["release_tag"], "models-v2")
         folders = {model["folder"] for model in self.release_manifest["models"]}
-        self.assertEqual(
-            folders,
-            {
-                "faster-whisper-large-v2",
-                "TEA-ASR-1.1-mini",
-                "Qwen3-ForcedAligner-0.6B",
-            },
-        )
+        self.assertEqual(folders, {"TEA-ASR-1.1-mini"})
 
 
 if __name__ == "__main__":

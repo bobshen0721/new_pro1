@@ -1,35 +1,8 @@
 {
   "schema_version": 1,
   "release_tag": "models-v2",
-  "generated_at_utc": "2026-08-06T09:11:36.8290572Z",
+  "generated_at_utc": "2026-08-06T09:47:07.8322904Z",
   "models": [
-    {
-      "folder": "faster-whisper-large-v2",
-      "source": "https://huggingface.co/Systran/faster-whisper-large-v2",
-      "revision": "f0fe81560cb8b68660e564f55dd99207059c092e",
-      "license": "MIT",
-      "archive": "faster-whisper-large-v2.tar",
-      "archive_size_bytes": 3089588224,
-      "archive_sha256": "0ed9b4ef62c56b518a830251adea10b62939e8106b777c5d001ebed8c6d1527e",
-      "required_files": [
-        "model.bin",
-        "config.json",
-        "tokenizer.json",
-        "vocabulary.txt"
-      ],
-      "parts": [
-        {
-          "asset": "faster-whisper-large-v2.tar.part001",
-          "size_bytes": 1992294400,
-          "sha256": "5cd937cff17acb4391998345516ee27cf76b629d695f851689a8c4516ea22fec"
-        },
-        {
-          "asset": "faster-whisper-large-v2.tar.part002",
-          "size_bytes": 1097293824,
-          "sha256": "8b1bf9e9d3021fe172d395ca856b3d5eac81f4844022b5a69832469638f5cc98"
-        }
-      ]
-    },
     {
       "folder": "TEA-ASR-1.1-mini",
       "source": "https://huggingface.co/JacobLinCool/TEA-ASR-1.1-mini",
@@ -56,33 +29,21 @@
           "sha256": "e383f745e396ed3ce5550b5758b20575bd807a46633632cfeac0583d51f65857"
         }
       ]
+    }
+  ],
+  "excluded_models": [
+    {
+      "folder": "faster-whisper-large-v2",
+      "source": "https://huggingface.co/Systran/faster-whisper-large-v2",
+      "available_release": "models-v1",
+      "reason": "Already published in models-v1; intentionally not duplicated in models-v2."
     },
     {
       "folder": "Qwen3-ForcedAligner-0.6B",
       "source": "https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B",
-      "revision": "c7cbfc2048c462b0d63a45797104fc9db3ad62b7",
-      "license": "Apache-2.0",
-      "archive": "Qwen3-ForcedAligner-0.6B.tar",
-      "archive_size_bytes": 1840081408,
-      "archive_sha256": "83d290942e0adb7822c59b01037c4d6cdf042ac571b5a5c98760fdffb02bde01",
-      "required_files": [
-        "config.json",
-        "merges.txt",
-        "model.safetensors",
-        "preprocessor_config.json",
-        "tokenizer_config.json",
-        "vocab.json"
-      ],
-      "parts": [
-        {
-          "asset": "Qwen3-ForcedAligner-0.6B.tar.part001",
-          "size_bytes": 1840081408,
-          "sha256": "83d290942e0adb7822c59b01037c4d6cdf042ac571b5a5c98760fdffb02bde01"
-        }
-      ]
-    }
-  ],
-  "excluded_models": [
+      "available_release": "models-v1",
+      "reason": "Already published in models-v1; intentionally not duplicated in models-v2."
+    },
     {
       "folder": "pyannote-community-1",
       "source": "https://huggingface.co/pyannote/speaker-diarization-community-1",
