@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Repository = "bobshen0721/new_pro1",
-    [string]$ReleaseTag = "models-v1",
+    [string]$ReleaseTag = "models-v2",
     [string]$ModelRoot = (Join-Path $PSScriptRoot "models"),
     [string]$ManifestPath = (Join-Path $PSScriptRoot "model-release-manifest.json"),
     [switch]$KeepDownloads

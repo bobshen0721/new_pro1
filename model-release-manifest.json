@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "release_tag": "models-v1",
-  "generated_at_utc": "2026-08-04T06:25:54.1741820Z",
+  "release_tag": "models-v2",
+  "generated_at_utc": "2026-08-06T09:11:36.8290572Z",
   "models": [
     {
       "folder": "faster-whisper-large-v2",
@@ -14,7 +14,8 @@
       "required_files": [
         "model.bin",
         "config.json",
-        "tokenizer.json"
+        "tokenizer.json",
+        "vocabulary.txt"
       ],
       "parts": [
         {
@@ -30,33 +31,29 @@
       ]
     },
     {
-      "folder": "TEA-ASR-1.1",
-      "source": "https://huggingface.co/JacobLinCool/TEA-ASR-1.1",
-      "revision": "bda08df76d4fd6b487b4a1dd7f0bddf8541696f8",
+      "folder": "TEA-ASR-1.1-mini",
+      "source": "https://huggingface.co/JacobLinCool/TEA-ASR-1.1-mini",
+      "revision": "98c58048572b44839dfcfa60de3ad7e365a5b232",
       "license": "MIT; underlying Qwen weights remain Apache-2.0",
-      "archive": "TEA-ASR-1.1.tar",
-      "archive_size_bytes": 4081930752,
-      "archive_sha256": "8179a550a73b53c0c85a393a552147de07f73220cb95e0f868f978fa738d1b77",
+      "archive": "TEA-ASR-1.1-mini.tar",
+      "archive_size_bytes": 1570664960,
+      "archive_sha256": "e383f745e396ed3ce5550b5758b20575bd807a46633632cfeac0583d51f65857",
       "required_files": [
-        "model.safetensors",
+        "added_tokens.json",
+        "chat_template.jinja",
         "config.json",
-        "tokenizer.json"
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
       ],
       "parts": [
         {
-          "asset": "TEA-ASR-1.1.tar.part001",
-          "size_bytes": 1992294400,
-          "sha256": "234601d436d225043e4c6dc8fab8372812c00c4b7223bb36c7e858247206a8b4"
-        },
-        {
-          "asset": "TEA-ASR-1.1.tar.part002",
-          "size_bytes": 1992294400,
-          "sha256": "ba588644d1fe3aa27667fcdd379a8f75843d5d8fb68b8f61b64437e0baceaa30"
-        },
-        {
-          "asset": "TEA-ASR-1.1.tar.part003",
-          "size_bytes": 97341952,
-          "sha256": "b9056046a08233ea4f83998f4568f772717159dfc37387f2e2c014c33dfff6b0"
+          "asset": "TEA-ASR-1.1-mini.tar.part001",
+          "size_bytes": 1570664960,
+          "sha256": "e383f745e396ed3ce5550b5758b20575bd807a46633632cfeac0583d51f65857"
         }
       ]
     },
@@ -69,9 +66,12 @@
       "archive_size_bytes": 1840081408,
       "archive_sha256": "83d290942e0adb7822c59b01037c4d6cdf042ac571b5a5c98760fdffb02bde01",
       "required_files": [
-        "model.safetensors",
         "config.json",
-        "preprocessor_config.json"
+        "merges.txt",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json"
       ],
       "parts": [
         {

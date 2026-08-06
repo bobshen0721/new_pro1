@@ -38,10 +38,10 @@ new_pro1/
 ├─ requirements.txt
 ├─ run.bat
 ├─ download_models.ps1
-├─ restore_release_models.ps1         # 舊 models-v1 Release 的還原工具
-├─ MODEL_RELEASE.md                    # 舊 models-v1 Release 說明
+├─ restore_release_models.ps1         # models-v2 Release 還原與雜湊驗證
+├─ MODEL_RELEASE.md                    # models-v2 來源與授權說明
 ├─ TUNING_GUIDE.md
-├─ models/                             # 不提交 Git；在可連外電腦下載後整包搬入
+├─ models/                             # 不提交 Git；可由 models-v2 或 HF 下載
 │  ├─ faster-whisper-large-v2/
 │  ├─ TEA-ASR-1.1-mini/
 │  ├─ Qwen3-ForcedAligner-0.6B/
@@ -77,16 +77,18 @@ $env:HF_TOKEN="hf_你的唯讀權杖"
 
 若舊的 `models\TEA-ASR-1.1` 仍存在，可以先保留作回退，但現行 app 不會使用它，也不能只把該資料夾改名成 `TEA-ASR-1.1-mini`；兩者是不同 checkpoint。
 
-### 舊版 GitHub Release 注意事項
+### 使用 GitHub Release 下載公開模型
 
-GitHub Release `models-v1` 是舊版封裝，其中仍是 2B `TEA-ASR-1.1`，不包含現行程式需要的 `TEA-ASR-1.1-mini`。因此不要只執行下列舊還原流程來準備現行環境：
+GitHub Release `models-v2` 提供 Whisper large-v2、TEA-ASR-1.1-mini 與 Qwen3-ForcedAligner-0.6B 的完整切分封裝。下載 Release 內的 `restore_release_models.ps1` 與 `model-release-manifest.json` 後執行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
-.\restore_release_models.ps1 -ReleaseTag models-v1
+.\restore_release_models.ps1 -ReleaseTag models-v2
 ```
 
-舊腳本仍可還原舊封裝並驗證 SHA-256，但現行版本請以 `download_models.ps1` 取得 mini 與其餘三個模型。舊 Release 的來源、授權與內容請看 [MODEL_RELEASE.md](MODEL_RELEASE.md)。
+腳本會逐一驗證分片與重組封裝的 SHA-256，再解壓到 `models`。Pyannote Community-1 因上游要求每位使用者接受存取條款，仍不會鏡像到 GitHub；請用自己的唯讀 HF Token 執行 `download_models.ps1` 取得。模型來源、revision、授權與完整說明請看 [MODEL_RELEASE.md](MODEL_RELEASE.md)。
+
+舊 `models-v1` 仍保留 2B `TEA-ASR-1.1` 供舊版程式使用；現行程式請使用 `models-v2`，不要把舊資料夾直接改名。
 
 ## 二、Windows 11 安裝
 
