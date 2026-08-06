@@ -5,13 +5,15 @@
 ## 模型與處理流程
 
 1. Silero 語音偵測：找出有人說話的區間，保留原始時間位置。
-2. `TEA-ASR-1.1`：產生台灣繁體中文主逐字稿。
+2. [`TEA-ASR-1.1-mini`](https://huggingface.co/JacobLinCool/TEA-ASR-1.1-mini)：產生台灣繁體中文主逐字稿。
 3. `Qwen3-ForcedAligner-0.6B`：替主逐字稿產生字／詞時間戳。
 4. `faster-whisper large-v2`：產生第二份比對稿，不會自動改寫主稿。
 5. `pyannote Community-1`：分出說話者 A／B，並標示疑似重疊語音。
 6. 逐段相似度：利用兩個模型的時間戳對齊文字，再逐段計算編輯距離相似度。
 
 兩個語音辨識模型不會被硬拼成一句話。每段仍採用 TEA 主稿；該段相似度低於 90% 時，逐字稿文字會變成紅色。
+
+`TEA-ASR-1.1-mini` 是 780M compact checkpoint，沿用標準 Qwen3-ASR 載入與 ForcedAligner 介面。相較原本的 2B `TEA-ASR-1.1`，它需要較少的模型儲存空間與顯示卡記憶體，但最困難的中英夾雜或專業語料可能略降準確率，正式導入前仍應以公司電話錄音重新驗證。
 
 ## 功能
 
@@ -36,12 +38,12 @@ new_pro1/
 ├─ requirements.txt
 ├─ run.bat
 ├─ download_models.ps1
-├─ restore_release_models.ps1
-├─ MODEL_RELEASE.md
+├─ restore_release_models.ps1         # 舊 models-v1 Release 的還原工具
+├─ MODEL_RELEASE.md                    # 舊 models-v1 Release 說明
 ├─ TUNING_GUIDE.md
-├─ models/                             # 不提交 Git；公開模型由 Release 分片提供
+├─ models/                             # 不提交 Git；在可連外電腦下載後整包搬入
 │  ├─ faster-whisper-large-v2/
-│  ├─ TEA-ASR-1.1/
+│  ├─ TEA-ASR-1.1-mini/
 │  ├─ Qwen3-ForcedAligner-0.6B/
 │  └─ pyannote-community-1/
 └─ outputs/                            # 不上傳 GitHub
@@ -61,22 +63,30 @@ $env:HF_TOKEN="hf_你的唯讀權杖"
 腳本會下載：
 
 - `Systran/faster-whisper-large-v2`
-- `JacobLinCool/TEA-ASR-1.1`
+- `JacobLinCool/TEA-ASR-1.1-mini`
 - `Qwen/Qwen3-ForcedAligner-0.6B`
 - `pyannote/speaker-diarization-community-1`
 
-完成後，把整個 `models` 資料夾帶進公司環境。
+腳本會下載已固定 revision 的模型，並檢查 app 實際需要的設定檔、tokenizer 與權重是否存在。完成後，把整個 `models` 資料夾帶進公司環境；不要只把 Hugging Face 快取中的單一權重檔帶入。
 
-### 使用 GitHub Release 下載公開模型
+在離線電腦可先驗證四個資料夾是否完整，不會連線或重新下載：
 
-GitHub Release `models-v1` 提供 Whisper large-v2、TEA-ASR-1.1 與 Qwen3-ForcedAligner-0.6B 的切分封裝。下載 Release 內的 `restore_release_models.ps1` 與 `model-release-manifest.json` 後執行：
+```powershell
+.\download_models.ps1 -VerifyOnly
+```
+
+若舊的 `models\TEA-ASR-1.1` 仍存在，可以先保留作回退，但現行 app 不會使用它，也不能只把該資料夾改名成 `TEA-ASR-1.1-mini`；兩者是不同 checkpoint。
+
+### 舊版 GitHub Release 注意事項
+
+GitHub Release `models-v1` 是舊版封裝，其中仍是 2B `TEA-ASR-1.1`，不包含現行程式需要的 `TEA-ASR-1.1-mini`。因此不要只執行下列舊還原流程來準備現行環境：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass -Force
 .\restore_release_models.ps1 -ReleaseTag models-v1
 ```
 
-腳本會驗證每個分片及重組封裝的 SHA-256。Pyannote Community-1 不包含在 Release；每位使用者仍須在 Hugging Face 接受條款，並使用自己的唯讀 HF Token 下載。模型來源、授權與完整說明請看 [MODEL_RELEASE.md](MODEL_RELEASE.md)。
+舊腳本仍可還原舊封裝並驗證 SHA-256，但現行版本請以 `download_models.ps1` 取得 mini 與其餘三個模型。舊 Release 的來源、授權與內容請看 [MODEL_RELEASE.md](MODEL_RELEASE.md)。
 
 ## 二、Windows 11 安裝
 
@@ -112,7 +122,7 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 
-TEA-ASR、ForcedAligner 與 Pyannote 在中央處理器上會非常慢，只建議用來排除安裝問題。
+TEA-ASR mini、ForcedAligner 與 Pyannote 在中央處理器上仍會很慢，只建議用來排除安裝問題。
 
 ## 三、啟動
 
@@ -134,7 +144,7 @@ http://127.0.0.1:7860
 1. 上傳電話錄音。
 2. 先選「平衡（建議先用）」。
 3. 按下「開始產生逐字稿」。
-4. 以 TEA-ASR 主逐字稿為底稿，查看每段的相似度。
+4. 以 TEA-ASR-1.1-mini 主逐字稿為底稿，查看每段的相似度。
 5. 看到紅色逐字稿時，點擊該段並回放音訊確認內容。
 6. 點擊任一主逐字稿段落，可跳到音檔原始時間播放。
 7. 下載 JSON 或 TXT。
@@ -145,8 +155,8 @@ A 是該通電話中最早被模型辨識到的說話者，B 是另一位。A �
 
 ## 離線與安全注意事項
 
-- 啟動時會設定 Hugging Face 與 Transformers 離線模式；四個模型必須已完整下載。
-- 不要把電話錄音、模型權重、輸出結果或權杖提交到 Git 歷史。三個公開模型只透過 Release 分片發布；Pyannote 不鏡像到 GitHub。
+- 啟動時會設定 Hugging Face 與 Transformers 離線模式；四個模型必須已完整下載。可先執行 `.\download_models.ps1 -VerifyOnly` 檢查。
+- 不要把電話錄音、模型權重、輸出結果或權杖提交到 Git 歷史；模型應在可連外電腦下載後，以公司核准的方式搬入離線環境。
 - 服務預設只監聽 `127.0.0.1`，不會直接開放給其他電腦。
 - 金額、日期、帳號、證券代號及疑似重疊段落，正式使用前必須人工複核。
 - 導入金融業正式環境前，應依公司個資、錄音保存、權限及稽核規範評估。
