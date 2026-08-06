@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Repository = "bobshen0721/new_pro1",
-    [string]$ReleaseTag = "models-v1",
+    [string]$ReleaseTag = "models-v2",
     [string]$ModelRoot = (Join-Path $PSScriptRoot "models"),
     [string]$ManifestPath = (Join-Path $PSScriptRoot "model-release-manifest.json"),
     [switch]$KeepDownloads
@@ -105,7 +105,12 @@ foreach ($model in $manifest.models) {
     }
 }
 
-Write-Host "Three public models are ready: $modelRootPath" -ForegroundColor Green
+Write-Host "$(@($manifest.models).Count) release model(s) are ready: $modelRootPath" -ForegroundColor Green
+foreach ($sharedFolder in @("faster-whisper-large-v2", "Qwen3-ForcedAligner-0.6B")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $modelRootPath $sharedFolder) -PathType Container)) {
+        Write-Warning "$sharedFolder is not included in models-v2. Keep it from your existing setup or download it with download_models.ps1."
+    }
+}
 if (-not (Test-Path -LiteralPath (Join-Path $modelRootPath "pyannote-community-1") -PathType Container)) {
     Write-Warning "The release does not mirror gated pyannote Community-1. Accept its Hugging Face conditions, then use download_models.ps1 with your own HF_TOKEN."
 }

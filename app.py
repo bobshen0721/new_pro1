@@ -30,12 +30,44 @@ from qwen_asr import Qwen3ASRModel
 from comparison import SIMILARITY_THRESHOLD, append_text, join_texts, score_time_aligned_segments
 
 ROOT = Path(__file__).resolve().parent
+TEA_MODEL_ID = "JacobLinCool/TEA-ASR-1.1-mini"
+TEA_MODEL_NAME = TEA_MODEL_ID.rsplit("/", 1)[-1]
 WHISPER_DIR = ROOT / "models" / "faster-whisper-large-v2"
-TEA_DIR = ROOT / "models" / "TEA-ASR-1.1"
+TEA_DIR = ROOT / "models" / TEA_MODEL_NAME
 ALIGNER_DIR = ROOT / "models" / "Qwen3-ForcedAligner-0.6B"
 PYANNOTE_DIR = ROOT / "models" / "pyannote-community-1"
 OUTPUT_DIR = ROOT / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+MODEL_REQUIRED_FILES = {
+    "Whisper large-v2": ("config.json", "model.bin", "tokenizer.json", "vocabulary.txt"),
+    TEA_MODEL_NAME: (
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ),
+    "Qwen3-ForcedAligner": (
+        "config.json",
+        "merges.txt",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+    ),
+    "Pyannote Community-1": (
+        "config.yaml",
+        "embedding/pytorch_model.bin",
+        "plda/plda.npz",
+        "plda/xvec_transform.npz",
+        "segmentation/pytorch_model.bin",
+    ),
+}
 
 
 @dataclass
@@ -115,10 +147,20 @@ def get_device(device_ui: str, compute_ui: str) -> tuple[str, str]:
     return device, compute
 
 
-def _required_model_dir(path: str, model_name: str) -> Path:
+def _required_model_dir(
+    path: str,
+    model_name: str,
+    required_files: tuple[str, ...] = (),
+) -> Path:
     model_dir = Path(path).expanduser().resolve()
     if not model_dir.is_dir():
         raise FileNotFoundError(f"找不到 {model_name} 模型：{model_dir}")
+    missing = [name for name in required_files if not (model_dir / name).is_file()]
+    if missing:
+        missing_text = "、".join(missing)
+        raise FileNotFoundError(
+            f"{model_name} 模型資料夾不完整：{model_dir}；缺少 {missing_text}。"
+        )
     return model_dir
 
 
@@ -132,10 +174,26 @@ def load_models(
 ) -> ModelBundle:
     global MODEL_CACHE_KEY, MODEL_CACHE
 
-    whisper_dir = _required_model_dir(whisper_path, "Whisper large-v2")
-    tea_dir = _required_model_dir(tea_path, "TEA-ASR-1.1")
-    aligner_dir = _required_model_dir(aligner_path, "Qwen3-ForcedAligner")
-    pyannote_dir = _required_model_dir(pyannote_path, "Pyannote Community-1")
+    whisper_dir = _required_model_dir(
+        whisper_path,
+        "Whisper large-v2",
+        MODEL_REQUIRED_FILES["Whisper large-v2"],
+    )
+    tea_dir = _required_model_dir(
+        tea_path,
+        TEA_MODEL_NAME,
+        MODEL_REQUIRED_FILES[TEA_MODEL_NAME],
+    )
+    aligner_dir = _required_model_dir(
+        aligner_path,
+        "Qwen3-ForcedAligner",
+        MODEL_REQUIRED_FILES["Qwen3-ForcedAligner"],
+    )
+    pyannote_dir = _required_model_dir(
+        pyannote_path,
+        "Pyannote Community-1",
+        MODEL_REQUIRED_FILES["Pyannote Community-1"],
+    )
     device, compute = get_device(device_ui, compute_ui)
     key = (
         str(whisper_dir),
@@ -175,8 +233,13 @@ def load_models(
             str(tea_dir),
             dtype=qwen_dtype,
             device_map=qwen_device,
+            local_files_only=True,
             forced_aligner=str(aligner_dir),
-            forced_aligner_kwargs={"dtype": qwen_dtype, "device_map": qwen_device},
+            forced_aligner_kwargs={
+                "dtype": qwen_dtype,
+                "device_map": qwen_device,
+                "local_files_only": True,
+            },
             max_inference_batch_size=4 if device == "cuda" else 1,
             max_new_tokens=512,
         )
@@ -501,7 +564,7 @@ def save_result(result: dict[str, Any], source_name: str) -> list[str]:
     review_count = int(comparison["manual_review_segment_count"])
     review_text = f"{review_count} 段需人工檢查" if review_count else "所有段落均達 90%"
     lines = [
-        "TEA-ASR-1.1 主逐字稿（Qwen3-ForcedAligner 時間戳）",
+        f"{TEA_MODEL_NAME} 主逐字稿（Qwen3-ForcedAligner 時間戳）",
         f"時間對齊後的加權相似度：{comparison['similarity_percent']:.2f}%（{review_text}）",
         "",
     ]
@@ -563,7 +626,7 @@ def process(
             )
 
             context = "\n".join(part for part in [prompt.strip(), hotwords.strip()] if part)
-            progress(0.24, desc="TEA-ASR-1.1 產生主逐字稿與時間戳")
+            progress(0.24, desc=f"{TEA_MODEL_NAME} 產生主逐字稿與時間戳")
             aligned_items, tea_info = tea_transcript(bundle.tea, samples, speech_regions, context)
 
             progress(0.58, desc="Whisper large-v2 產生比對稿")
@@ -600,7 +663,7 @@ def process(
             result = {
                 "audio_file": Path(audio_path).name,
                 "pipeline": {
-                    "primary_asr": "JacobLinCool/TEA-ASR-1.1",
+                    "primary_asr": TEA_MODEL_ID,
                     "comparison_asr": "Systran/faster-whisper-large-v2",
                     "timestamps": "Qwen/Qwen3-ForcedAligner-0.6B",
                     "speakers": "pyannote/speaker-diarization-community-1",
@@ -654,7 +717,7 @@ def apply_profile(name):
 with gr.Blocks(css=CSS, js=JS, title="台灣金融業電話逐字稿") as demo:
     gr.Markdown(
         "# 台灣金融業電話逐字稿\n"
-        "TEA-ASR-1.1 主稿＋Whisper large-v2 比對稿；Qwen3-ForcedAligner 時間戳；"
+        f"{TEA_MODEL_NAME} 主稿＋Whisper large-v2 比對稿；Qwen3-ForcedAligner 時間戳；"
         "Pyannote Community-1 說話者 A／B。兩份文字依時間逐段比較，低於 90% 的段落會標紅。"
         "點擊主逐字稿可跳到該時間播放。"
     )
@@ -682,11 +745,11 @@ with gr.Blocks(css=CSS, js=JS, title="台灣金融業電話逐字稿") as demo:
         hotwords = gr.Textbox(HOTWORDS, label="金融關鍵詞", lines=2)
     with gr.Accordion("離線模型路徑", open=False):
         whisper_path = gr.Textbox(str(WHISPER_DIR), label="Whisper large-v2 模型資料夾")
-        tea_path = gr.Textbox(str(TEA_DIR), label="TEA-ASR-1.1 模型資料夾")
+        tea_path = gr.Textbox(str(TEA_DIR), label=f"{TEA_MODEL_NAME} 模型資料夾")
         aligner_path = gr.Textbox(str(ALIGNER_DIR), label="Qwen3-ForcedAligner 模型資料夾")
         pyannote_path = gr.Textbox(str(PYANNOTE_DIR), label="Pyannote Community-1 模型資料夾")
     status = gr.Markdown("尚未開始。")
-    gr.Markdown("## TEA-ASR-1.1 主逐字稿")
+    gr.Markdown(f"## {TEA_MODEL_NAME} 主逐字稿")
     transcript_html = gr.HTML('<div class="empty">完成後顯示在這裡。</div>')
     whisper_comparison = gr.Textbox(
         label="Whisper large-v2 比對稿（不會自動覆蓋主稿）",

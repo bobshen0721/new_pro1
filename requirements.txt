@@ -2,6 +2,8 @@ gradio>=5.49,<7
 faster-whisper>=1.2,<2
 pyannote.audio>=4.0,<5
 huggingface-hub>=0.34,<2
+# TEA-ASR-1.1-mini is a drop-in Qwen3-ASR safetensors checkpoint.
 qwen-asr==0.0.6
+safetensors>=0.4.3,<1
 opencc-python-reimplemented>=0.1.7,<1
 rapidfuzz>=3.9,<4
